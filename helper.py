@@ -11,6 +11,9 @@ from glob import glob
 from urllib.request import urlretrieve
 from tqdm import tqdm
 
+# Imports for video processing
+import cv2
+from moviepy.editor import VideoFileClip
 
 class DLProgress(tqdm):
     last_block = 0
@@ -138,3 +141,24 @@ def save_inference_samples(runs_dir, data_dir, sess, image_shape, logits, keep_p
         sess, logits, keep_prob, input_image, os.path.join(data_dir, 'data_road/testing'), image_shape)
     for name, image in image_outputs:
         scipy.misc.imsave(os.path.join(output_dir, name), image)
+        
+def process_image(image, image_shape, sess, logits, keep_prob, image_pl):
+    img = scipy.misc.imresize(image, image_shape)
+
+    im_softmax = sess.run(
+        [tf.nn.softmax(logits)],
+        {keep_prob: 1.0, image_pl: [img]})
+    im_softmax = im_softmax[0][:, 1].reshape(image_shape[0], image_shape[1])
+    segmentation = (im_softmax > 0.5).reshape(image_shape[0], image_shape[1], 1)
+    mask = np.dot(segmentation, np.array([[0, 255, 0, 127]]))
+    mask = scipy.misc.toimage(mask, mode="RGBA")
+    street_im = scipy.misc.toimage(img)
+    street_im.paste(mask, box=None, mask=mask)
+
+    return np.array(street_im)
+    
+def save_video_inference(video_path, video_out_dir, sess, image_shape, logits, keep_prob, input_image):
+    print('Processing video')
+    clip1      = VideoFileClip(video_path)
+    white_clip = clip1.fl_image(lambda image: process_image(image, image_shape, sess, logits, keep_prob, input_image)) #NOTE: this function expects color images!!
+    white_clip.write_videofile(os.path.join(video_out_dir, str(time.time()) + '.mp4'), audio=False)
